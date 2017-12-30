@@ -54,6 +54,7 @@ class phpMQTT {
     private $force_ip_version      = false;
     private $force_ip_version_type = 4;
     private $encryption_enabled    = false;
+    private $fuck_encryption    = false;
     private $stream_crypto_type    = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
 
 	public $cafile;
@@ -118,6 +119,16 @@ class phpMQTT {
     }
     
     /**
+     * Skip all authentication checks, man in the middle attacks are possible and not detectable
+     * Should be NEVER used in a productive environment!!!
+     * @param bool $enabled
+     */
+    public function set_encrypted_connection_to_insecure_connection_equal_to_unencrypted_for_debugging_only(bool $enabled)
+    {
+        $this->fuck_encryption = $enabled;
+    }
+    
+    /**
      * @return array    e.g.
      * [protocol] => TLSv1.2
      * [cipher_name] => AES256-GCM-SHA384
@@ -167,11 +178,29 @@ class phpMQTT {
             // connect to the server
             $this->socket = stream_socket_client('tcp://' . $this->address . ':' . $this->port, $errno, $errstr, $this->timeout, STREAM_CLIENT_CONNECT, $socketContext);
             
+            if (!$this->socket) {
+                if ($this->debug) error_log("stream_socket_create() $errno, $errstr \n");
+                echo "stream_socket_create() $errno, $errstr \n";
+                return false;
+            }
+            
+            // skip all certificate authentication checks -> insecure connection -> only debugging as man in the middle
+            if ($this->fuck_encryption) {
+                stream_context_set_option($socketContext,
+                    ['ssl' => [
+                        'verify_peer'      => false,
+                        'verify_peer_name' => false,
+                    ]]
+                );
+            }
+            
             // establish encryption
             if ($this->encryption_enabled === true) {
                 $successful_crypt_enabled = stream_socket_enable_crypto($this->socket, true, $this->stream_crypto_type);
                 if ($successful_crypt_enabled !== true) {
-                    throw new \RuntimeException('Could not establish a secure connection to MQTT server, maybe cipher not supported or old certificate?');
+                    throw new \RuntimeException('Could not establish a secure connection to MQTT server, maybe cipher not supported or old certificate?' . "\n"
+                        . 'errno: ' . $errno . "\n"
+                        . 'errstr: ' . $errstr);
                 }
             }
         }
